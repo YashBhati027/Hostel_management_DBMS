@@ -1,0 +1,107 @@
+# Hostel Management and Monitoring System
+
+## 1. Hostel Management & Monitoring Queries
+
+The system should support the following queries and operations to monitor student activities, manage hostel resources and maintain proper records:
+
+- **Student Entry/Exit Tracking:** Maintain records of students entering and leaving the hostel, including their entry and exit dates and times.
+- **Peak Entry Time Analysis:** Identify peak hostel entry hours by analyzing the number of students entering during different time intervals.
+- **Leave Management:** Maintain student leave records, including leave start date, expected return date, actual return date, leave duration and approval status.
+- **Student Activity Analysis:** Identify students with:
+  - Maximum number of leaves.
+  - Maximum number of late entries.
+  - Maximum time spent outside the hostel.
+- **Visitor Management:** Identify students receiving the maximum number of visitors, excluding family members, and maintain visitor details and visit records.
+- **Opposite Gender Entry Monitoring:** Generate alerts whenever a visitor of the opposite gender enters a restricted hostel area, according to hostel rules and permissions.
+- **Student Absentee Monitoring:** Identify students who remain absent beyond the permitted time or fail to return within their approved leave period.
+- **Room Allotment Management:** Manage hostel room allocation based on student details, room capacity and availability.
+- **Available Room/Bed Tracking:** Identify vacant and occupied rooms/beds and maintain updated hostel occupancy records.
+
+## 2. Database Design
+
+Based on the identified requirements and queries, a relational database needs to be designed to store and manage information about students, hostels, rooms, room allotments, entry/exit activities, leave records and visitors.
+
+### Requirements and Corresponding Tables
+
+| Requirement | Required Table(s) |
+|---|---|
+| Student entry/exit tracking | Student, Entry_Exit_Log |
+| Peak entry time analysis | Entry_Exit_Log |
+| Leave management | Student, Leave_Record |
+| Maximum leaves | Student, Leave_Record |
+| Late entry analysis | Student, Entry_Exit_Log |
+| Maximum time spent outside | Student, Entry_Exit_Log |
+| Visitor management | Student, Visitor, Visitor_Log |
+| Opposite gender entry alerts | Student, Visitor, Visitor_Log |
+| Student absentee monitoring | Student, Entry_Exit_Log, Leave_Record |
+| Room allotment | Student, Hostel, Room, Room_Allotment |
+| Available rooms/beds | Hostel, Room, Room_Allotment |
+
+### Main Tables
+
+The main tables proposed for the system are:
+
+- **Student:** Stores student details such as student ID, name, gender, contact information and course details.
+- **Hostel:** Stores hostel details, including hostel ID, name, type and capacity.
+- **Room:** Stores room details such as room number, hostel ID, room capacity and room status.
+- **Room_Allotment:** Maintains student room allocation records, including allotment date and vacating date.
+- **Entry_Exit_Log:** Stores student entry and exit dates and times.
+- **Leave_Record:** Maintains leave applications, leave duration, approval status and return details.
+- **Visitor:** Stores visitor information, including name, gender, relationship with the student and visitor category.
+- **Visitor_Log:** Maintains visitor entry and exit records, visit date, time, purpose and the student being visited.
+
+### Relationships
+
+| Relationship | Entities | Cardinality |
+|---|---|---|
+| Belongs_To | Student – Hostel | N : 1 |
+| Contains | Hostel – Room | 1 : N |
+| Records | Student – Entry_Exit_Log | 1 : N |
+| Applies_For | Student – Leave_Record | 1 : N |
+| Receives | Student – Visitor_Log | 1 : N |
+| Registers | Visitor – Visitor_Log | 1 : N |
+| Allocated_To | Student – Room_Allotment | 1 : N |
+| Assigned_In | Room – Room_Allotment | 1 : N |
+
+The database should define appropriate tables, attributes, primary keys, foreign keys, relationships, cardinalities and constraints to maintain data consistency and referential integrity.
+
+## 3. User-specific Views
+
+The system should provide appropriate database views for different types of users, such as students, hostel wardens and administrators. Each user should be able to access information relevant to their role while maintaining appropriate data visibility.
+
+- **Student View:** Students can view their room allotment details, entry/exit history, leave records and visitor information related to their hostel stay.
+- **Warden View:** Wardens can monitor student entry/exit activities, late entries, leave applications, visitor records and absentee alerts.
+- **Administrator View:** Administrators can access overall hostel occupancy, available rooms/beds, student records, hostel activity reports and monitoring statistics.
+
+## 4. Triggers, Stored Procedures and Functions
+
+The system should use database triggers, stored procedures and functions to automate important operations, generate alerts and maintain data consistency.
+
+These may include:
+
+### Triggers
+- Generate alerts for unauthorized late entries.
+- Generate alerts when an opposite-gender visitor enters a restricted area.
+- Update room availability after room allotment or room vacancy.
+- Generate alerts when a student does not return within the approved leave period.
+- Maintain automatic records of important database changes.
+
+### Stored Procedures
+- Register student entry and exit activities.
+- Process and approve student leave applications.
+- Allocate rooms to students based on availability.
+- Register visitors and maintain their entry/exit records.
+- Generate reports for hostel occupancy and student activities.
+
+### Functions
+- Calculate the total duration of student leave.
+- Calculate the time spent by students outside the hostel.
+- Calculate the number of late entries made by a student.
+- Calculate room occupancy and available beds.
+- Calculate the total number of visitors received by a student.
+
+The system should also implement appropriate constraints and validation rules to prevent invalid entries, duplicate allotments and inconsistent records.
+
+## Overall Objective
+
+The overall objective is to develop a Hostel Management and Monitoring System that efficiently manages student movement, leave applications, visitor information and room allocation. The system aims to improve hostel monitoring, maintain accurate student activity records, identify unusual activities, support hostel resource planning and automate important hostel operations using relational database concepts, SQL queries, views, triggers, stored procedures and functions.
