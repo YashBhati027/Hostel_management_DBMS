@@ -1,0 +1,410 @@
+-- College Hostel Management Database
+-- MySQL 8.0+
+-- Demo data only: replace all sample records before real use.
+-- Import with MySQL Workbench or: mysql -u your_user -p < college_hostel_management.sql
+
+CREATE DATABASE IF NOT EXISTS college_hostel_management
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+USE college_hostel_management;
+
+SET FOREIGN_KEY_CHECKS = 0;
+DROP VIEW IF EXISTS v_current_room_occupancy;
+DROP VIEW IF EXISTS v_student_current_room;
+DROP PROCEDURE IF EXISTS generate_missing_entry_alerts;
+DROP TRIGGER IF EXISTS trg_room_allotment_capacity_insert;
+DROP TRIGGER IF EXISTS trg_room_allotment_capacity_update;
+DROP TABLE IF EXISTS missing_alert;
+DROP TABLE IF EXISTS entry_expectation;
+DROP TABLE IF EXISTS visitor_request;
+DROP TABLE IF EXISTS visitor;
+DROP TABLE IF EXISTS entry_log;
+DROP TABLE IF EXISTS room_allotment;
+DROP TABLE IF EXISTS room;
+DROP TABLE IF EXISTS hostel;
+DROP TABLE IF EXISTS student;
+DROP TABLE IF EXISTS department;
+DROP TABLE IF EXISTS staff;
+SET FOREIGN_KEY_CHECKS = 1;
+
+CREATE TABLE staff (
+    staff_id INT AUTO_INCREMENT PRIMARY KEY,
+    staff_name VARCHAR(120) NOT NULL,
+    designation VARCHAR(80) NOT NULL,
+    email VARCHAR(150) UNIQUE,
+    phone VARCHAR(20),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE department (
+    department_id INT AUTO_INCREMENT PRIMARY KEY,
+    department_name VARCHAR(120) NOT NULL UNIQUE,
+    hod_staff_id INT NULL UNIQUE,
+    CONSTRAINT fk_department_hod FOREIGN KEY (hod_staff_id)
+      REFERENCES staff(staff_id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE student (
+    student_id INT AUTO_INCREMENT PRIMARY KEY,
+    enrollment_no VARCHAR(40) NOT NULL UNIQUE,
+    student_name VARCHAR(120) NOT NULL,
+    phone VARCHAR(20),
+    email VARCHAR(150) UNIQUE,
+    course VARCHAR(100) NOT NULL,
+    study_year TINYINT UNSIGNED,
+    department_id INT NOT NULL,
+    status ENUM('ACTIVE','ON_LEAVE','INACTIVE','GRADUATED') NOT NULL DEFAULT 'ACTIVE',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_student_department FOREIGN KEY (department_id)
+      REFERENCES department(department_id) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE hostel (
+    hostel_id INT AUTO_INCREMENT PRIMARY KEY,
+    hostel_name VARCHAR(100) NOT NULL UNIQUE,
+    hostel_type ENUM('BOYS','GIRLS','MIXED') NOT NULL,
+    address VARCHAR(255),
+    active BOOLEAN NOT NULL DEFAULT TRUE
+) ENGINE=InnoDB;
+
+CREATE TABLE room (
+    room_id INT AUTO_INCREMENT PRIMARY KEY,
+    hostel_id INT NOT NULL,
+    room_number VARCHAR(20) NOT NULL,
+    floor_number SMALLINT,
+    capacity TINYINT UNSIGNED NOT NULL,
+    room_status ENUM('AVAILABLE','MAINTENANCE','INACTIVE') NOT NULL DEFAULT 'AVAILABLE',
+    UNIQUE KEY uq_room_hostel_number (hostel_id, room_number),
+    CONSTRAINT chk_room_capacity CHECK (capacity > 0),
+    CONSTRAINT fk_room_hostel FOREIGN KEY (hostel_id)
+      REFERENCES hostel(hostel_id) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE room_allotment (
+    allotment_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    room_id INT NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NULL,
+    notes VARCHAR(255),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_allotment_dates CHECK (end_date IS NULL OR end_date >= start_date),
+    CONSTRAINT fk_allotment_student FOREIGN KEY (student_id)
+      REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_allotment_room FOREIGN KEY (room_id)
+      REFERENCES room(room_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_allotment_student_dates (student_id, start_date, end_date),
+    INDEX idx_allotment_room_dates (room_id, start_date, end_date)
+) ENGINE=InnoDB;
+
+-- entry_type is ENTRY or EXIT. Each event is recorded separately.
+CREATE TABLE entry_log (
+    entry_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    event_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    entry_type ENUM('ENTRY','EXIT') NOT NULL,
+    recorded_by VARCHAR(120),
+    method ENUM('MANUAL','CARD','QR','BIOMETRIC') NOT NULL DEFAULT 'MANUAL',
+    notes VARCHAR(255),
+    CONSTRAINT fk_entry_student FOREIGN KEY (student_id)
+      REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_entry_student_time (student_id, event_time),
+    INDEX idx_entry_time_type (event_time, entry_type)
+) ENGINE=InnoDB;
+
+-- Expected return/entry rules. Example: expected_by=21:00, grace_minutes=30.
+CREATE TABLE entry_expectation (
+    expectation_id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    rule_name VARCHAR(100) NOT NULL DEFAULT 'Regular hostel return',
+    expected_by TIME NOT NULL,
+    grace_minutes SMALLINT UNSIGNED NOT NULL DEFAULT 30,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    valid_from DATE NOT NULL DEFAULT (CURRENT_DATE),
+    valid_until DATE NULL,
+    CONSTRAINT chk_expectation_dates CHECK (valid_until IS NULL OR valid_until >= valid_from),
+    CONSTRAINT fk_expectation_student FOREIGN KEY (student_id)
+      REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_expectation_active (active, student_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE missing_alert (
+    alert_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    expectation_id INT NULL,
+    alert_date DATE NOT NULL,
+    alert_type ENUM('MISSED_ENTRY','REPEATED_MISSED_ENTRY') NOT NULL DEFAULT 'MISSED_ENTRY',
+    severity ENUM('LOW','MEDIUM','HIGH') NOT NULL DEFAULT 'MEDIUM',
+    status ENUM('OPEN','UNDER_REVIEW','RESOLVED','FALSE_ALARM') NOT NULL DEFAULT 'OPEN',
+    details VARCHAR(500),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME NULL,
+    resolved_by INT NULL,
+    CONSTRAINT uq_alert_student_date_type UNIQUE (student_id, alert_date, alert_type),
+    CONSTRAINT fk_alert_student FOREIGN KEY (student_id)
+      REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_alert_expectation FOREIGN KEY (expectation_id)
+      REFERENCES entry_expectation(expectation_id) ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_alert_resolver FOREIGN KEY (resolved_by)
+      REFERENCES staff(staff_id) ON DELETE SET NULL ON UPDATE CASCADE,
+    INDEX idx_alert_status_date (status, alert_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE visitor (
+    visitor_id INT AUTO_INCREMENT PRIMARY KEY,
+    visitor_name VARCHAR(120) NOT NULL,
+    phone VARCHAR(20) NOT NULL,
+    id_type ENUM('COLLEGE_ID','GOVERNMENT_ID','OTHER') NOT NULL DEFAULT 'GOVERNMENT_ID',
+    -- Store only a masked/reference token if possible; avoid storing full ID numbers.
+    id_reference VARCHAR(100),
+    verification_status ENUM('PENDING','VERIFIED','REJECTED') NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_visitor_phone (phone)
+) ENGINE=InnoDB;
+
+CREATE TABLE visitor_request (
+    request_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    visitor_id INT NOT NULL,
+    student_id INT NOT NULL,
+    visit_time DATETIME NOT NULL,
+    purpose VARCHAR(255) NOT NULL,
+    approval_status ENUM('PENDING','APPROVED','REJECTED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+    approved_by INT NULL,
+    decision_time DATETIME NULL,
+    decision_notes VARCHAR(255),
+    checkin_time DATETIME NULL,
+    checkout_time DATETIME NULL,
+    CONSTRAINT chk_visitor_times CHECK (checkout_time IS NULL OR checkin_time IS NULL OR checkout_time >= checkin_time),
+    CONSTRAINT fk_request_visitor FOREIGN KEY (visitor_id)
+      REFERENCES visitor(visitor_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_request_student FOREIGN KEY (student_id)
+      REFERENCES student(student_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_request_approver FOREIGN KEY (approved_by)
+      REFERENCES staff(staff_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_request_student_visit (student_id, visit_time),
+    INDEX idx_request_approval (approval_status, visit_time)
+) ENGINE=InnoDB;
+
+-- Prevent active room occupancy from exceeding capacity and prevent overlapping
+-- active allotments for the same student. These triggers are helpful safeguards;
+-- concurrent production allocations should also be serialized in a transaction.
+DELIMITER $$
+
+CREATE TRIGGER trg_room_allotment_capacity_insert
+BEFORE INSERT ON room_allotment
+FOR EACH ROW
+BEGIN
+    DECLARE room_capacity INT;
+    DECLARE occupied_count INT;
+    DECLARE student_overlap_count INT;
+
+    IF NEW.end_date IS NULL OR NEW.end_date >= CURRENT_DATE THEN
+        SELECT capacity INTO room_capacity
+        FROM room WHERE room_id = NEW.room_id AND room_status = 'AVAILABLE';
+
+        IF room_capacity IS NULL THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Room is unavailable or does not exist';
+        END IF;
+
+        SELECT COUNT(*) INTO occupied_count
+        FROM room_allotment
+        WHERE room_id = NEW.room_id
+          AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+          AND start_date <= COALESCE(NEW.end_date, '9999-12-31');
+
+        IF occupied_count >= room_capacity THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Room capacity would be exceeded';
+        END IF;
+
+        SELECT COUNT(*) INTO student_overlap_count
+        FROM room_allotment
+        WHERE student_id = NEW.student_id
+          AND start_date <= COALESCE(NEW.end_date, '9999-12-31')
+          AND COALESCE(end_date, '9999-12-31') >= NEW.start_date;
+
+        IF student_overlap_count > 0 THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Student already has an overlapping room allotment';
+        END IF;
+    END IF;
+END$$
+
+CREATE TRIGGER trg_room_allotment_capacity_update
+BEFORE UPDATE ON room_allotment
+FOR EACH ROW
+BEGIN
+    DECLARE room_capacity INT;
+    DECLARE occupied_count INT;
+    DECLARE student_overlap_count INT;
+
+    IF NEW.end_date IS NULL OR NEW.end_date >= CURRENT_DATE THEN
+        SELECT capacity INTO room_capacity
+        FROM room WHERE room_id = NEW.room_id AND room_status = 'AVAILABLE';
+
+        IF room_capacity IS NULL THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Room is unavailable or does not exist';
+        END IF;
+
+        SELECT COUNT(*) INTO occupied_count
+        FROM room_allotment
+        WHERE room_id = NEW.room_id
+          AND allotment_id <> OLD.allotment_id
+          AND (end_date IS NULL OR end_date >= CURRENT_DATE)
+          AND start_date <= COALESCE(NEW.end_date, '9999-12-31');
+
+        IF occupied_count >= room_capacity THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Room capacity would be exceeded';
+        END IF;
+
+        SELECT COUNT(*) INTO student_overlap_count
+        FROM room_allotment
+        WHERE student_id = NEW.student_id
+          AND allotment_id <> OLD.allotment_id
+          AND start_date <= COALESCE(NEW.end_date, '9999-12-31')
+          AND COALESCE(end_date, '9999-12-31') >= NEW.start_date;
+
+        IF student_overlap_count > 0 THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Student already has an overlapping room allotment';
+        END IF;
+    END IF;
+END$$
+
+-- Run this procedure after the expected return time + grace period.
+-- It creates today's missed-entry alerts for active students with active rules.
+-- The application must schedule this call; MySQL Event Scheduler is optional.
+CREATE PROCEDURE generate_missing_entry_alerts()
+BEGIN
+    INSERT INTO missing_alert
+      (student_id, expectation_id, alert_date, alert_type, severity, details)
+    SELECT
+      s.student_id,
+      ee.expectation_id,
+      CURRENT_DATE,
+      CASE
+        WHEN (
+          SELECT COUNT(*)
+          FROM missing_alert ma
+          WHERE ma.student_id = s.student_id
+            AND ma.alert_date >= DATE_SUB(CURRENT_DATE, INTERVAL 7 DAY)
+            AND ma.alert_type = 'MISSED_ENTRY'
+        ) >= 2 THEN 'REPEATED_MISSED_ENTRY'
+        ELSE 'MISSED_ENTRY'
+      END,
+      CASE
+        WHEN (
+          SELECT COUNT(*)
+          FROM missing_alert ma
+          WHERE ma.student_id = s.student_id
+            AND ma.alert_date >= DATE_SUB(CURRENT_DATE, INTERVAL 7 DAY)
+            AND ma.alert_type = 'MISSED_ENTRY'
+        ) >= 2 THEN 'HIGH'
+        ELSE 'MEDIUM'
+      END,
+      CONCAT('No qualifying ENTRY logged by ', ee.expected_by,
+             ' plus ', ee.grace_minutes, ' minutes.')
+    FROM student s
+    JOIN entry_expectation ee ON ee.student_id = s.student_id
+    WHERE s.status = 'ACTIVE'
+      AND ee.active = TRUE
+      AND ee.valid_from <= CURRENT_DATE
+      AND (ee.valid_until IS NULL OR ee.valid_until >= CURRENT_DATE)
+      AND CURRENT_TIME >= ADDTIME(ee.expected_by, SEC_TO_TIME(ee.grace_minutes * 60))
+      AND NOT EXISTS (
+        SELECT 1 FROM entry_log el
+        WHERE el.student_id = s.student_id
+          AND el.entry_type = 'ENTRY'
+          AND DATE(el.event_time) = CURRENT_DATE
+          AND TIME(el.event_time) <= ADDTIME(ee.expected_by, SEC_TO_TIME(ee.grace_minutes * 60))
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM missing_alert existing
+        WHERE existing.student_id = s.student_id
+          AND existing.alert_date = CURRENT_DATE
+          AND existing.alert_type = 'MISSED_ENTRY'
+      );
+END$$
+
+DELIMITER ;
+
+CREATE VIEW v_student_current_room AS
+SELECT s.student_id, s.enrollment_no, s.student_name,
+       h.hostel_name, r.room_number, ra.start_date, ra.end_date
+FROM student s
+LEFT JOIN room_allotment ra
+  ON ra.student_id = s.student_id
+ AND ra.start_date <= CURRENT_DATE
+ AND (ra.end_date IS NULL OR ra.end_date >= CURRENT_DATE)
+LEFT JOIN room r ON r.room_id = ra.room_id
+LEFT JOIN hostel h ON h.hostel_id = r.hostel_id;
+
+CREATE VIEW v_current_room_occupancy AS
+SELECT h.hostel_name, r.room_id, r.room_number, r.capacity,
+       COUNT(ra.allotment_id) AS occupied_beds,
+       r.capacity - COUNT(ra.allotment_id) AS available_beds
+FROM room r
+JOIN hostel h ON h.hostel_id = r.hostel_id
+LEFT JOIN room_allotment ra
+  ON ra.room_id = r.room_id
+ AND ra.start_date <= CURRENT_DATE
+ AND (ra.end_date IS NULL OR ra.end_date >= CURRENT_DATE)
+GROUP BY h.hostel_name, r.room_id, r.room_number, r.capacity;
+
+-- DEMO DATA (use fake/sample information only)
+INSERT INTO staff (staff_name, designation, email, phone) VALUES
+('Demo HOD - Computer Science', 'HOD', 'hod.cs@example.edu', '9000000001'),
+('Demo Hostel Warden', 'Warden', 'warden@example.edu', '9000000002');
+
+INSERT INTO department (department_name, hod_staff_id) VALUES
+('Computer Science', 1),
+('Biotechnology', NULL);
+
+INSERT INTO student
+(enrollment_no, student_name, phone, email, course, study_year, department_id, status)
+VALUES
+('DEMO-MCA-001', 'Aarav Sharma', '9000000011', 'aarav.demo@example.edu', 'MCA', 1, 1, 'ACTIVE'),
+('DEMO-MCA-002', 'Ishita Verma', '9000000012', 'ishita.demo@example.edu', 'MCA', 1, 1, 'ACTIVE'),
+('DEMO-BT-001', 'Riya Mehta', '9000000013', 'riya.demo@example.edu', 'Biotechnology', 1, 2, 'ACTIVE');
+
+INSERT INTO hostel (hostel_name, hostel_type, address) VALUES
+('Demo Boys Hostel', 'BOYS', 'Demo campus address'),
+('Demo Girls Hostel', 'GIRLS', 'Demo campus address');
+
+INSERT INTO room (hostel_id, room_number, floor_number, capacity, room_status) VALUES
+(1, '101', 1, 2, 'AVAILABLE'),
+(1, '102', 1, 3, 'AVAILABLE'),
+(2, '201', 2, 2, 'AVAILABLE');
+
+INSERT INTO room_allotment (student_id, room_id, start_date, end_date, notes) VALUES
+(1, 1, CURRENT_DATE, NULL, 'Demo allotment'),
+(2, 1, CURRENT_DATE, NULL, 'Demo allotment'),
+(3, 3, CURRENT_DATE, NULL, 'Demo allotment');
+
+INSERT INTO entry_expectation (student_id, rule_name, expected_by, grace_minutes, active)
+VALUES
+(1, 'Night hostel return', '21:00:00', 30, TRUE),
+(2, 'Night hostel return', '21:00:00', 30, TRUE),
+(3, 'Night hostel return', '21:00:00', 30, TRUE);
+
+INSERT INTO entry_log (student_id, event_time, entry_type, recorded_by, method, notes)
+VALUES
+(1, NOW() - INTERVAL 2 HOUR, 'ENTRY', 'Demo Warden', 'MANUAL', 'Sample entry'),
+(1, NOW() - INTERVAL 5 HOUR, 'EXIT', 'Demo Warden', 'MANUAL', 'Sample exit');
+
+INSERT INTO visitor (visitor_name, phone, id_type, id_reference, verification_status)
+VALUES ('Demo Visitor', '9000000099', 'GOVERNMENT_ID', 'DEMO-ID-****', 'VERIFIED');
+
+INSERT INTO visitor_request
+(visitor_id, student_id, visit_time, purpose, approval_status, approved_by, decision_time, decision_notes)
+VALUES
+(1, 1, NOW() + INTERVAL 1 DAY, 'Demo family visit', 'APPROVED', 1, NOW(), 'Demo approval only');
+
+-- Useful queries:
+-- SELECT * FROM student;
+-- SELECT * FROM v_student_current_room;
+-- SELECT * FROM v_current_room_occupancy;
+-- SELECT * FROM entry_log ORDER BY event_time DESC;
+-- SELECT * FROM visitor_request ORDER BY visit_time DESC;
+-- SELECT * FROM missing_alert ORDER BY created_at DESC;
+-- CALL generate_missing_entry_alerts();
+-- UPDATE visitor_request SET approval_status='APPROVED', approved_by=1,
+--   decision_time=NOW() WHERE request_id=1;
+
